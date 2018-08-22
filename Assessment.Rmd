@@ -1,0 +1,303 @@
+---
+title: "Therapeutics Data Analysis"
+author: "Qing(Quinn)Li"
+date: "5/6/2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r libraries}
+##load any librarys you may need.  tidyverse has already been loaded here for you
+libraries <- c("tidyverse")
+for (l in libraries) {
+  suppressPackageStartupMessages(library(l, character.only = TRUE))
+}
+```
+
+
+ 
+
+
+## Data 
+Start by loading the dataset Theoph.  This is data relating to apharmacokinetics experiment of the anti-asthmatic drug theophylline.  
+
+
+```{r DataLoad}
+#A.Data Preparation
+data(Theoph)
+str(Theoph)
+
+```
+
+To add a bit more complexity, we will introduce a hypothetical demographics dataset characterizing the subjects.
+
+```{r demographics}
+#A1. collect the data as needed
+library(dplyr)
+setwd("/Users/wall-e/Downloads")
+dm <- read.csv("dm.csv")
+
+#A2. Explore the demographics data before cleanup
+str(dm)
+summary(dm)
+dm
+
+```
+
+```{r data cleaning1}
+# A2.2 Make a mismap to check for missing value 
+##please add any corresponding data cleanup as needed
+
+library(Amelia)
+missmap(dm,main = "Missing values vs observed")
+```
+
+No missing values so far.
+
+```{r data cleaning2}
+#A3.1 Rename the variables in the same form, which is also preparation for the next step.
+#A3.2 Standardize the values under "sex" column/string
+#A3.3 Clean the "Age" column/string by unifying the "Age" units to years
+#A3.3-a.Retrive all the numbers from the Age string
+#A3.3-b.Transfermation with logic: 
+#1.if number is <150, I assume it's years and keep it as it is
+#2.if it's >150 and <1800(=150*12), I assume it's months
+#3.and if it's >1800, I assume it's weeks. I pause at the week here but not go to days and hours since there's no such data in this dataset
+
+dm<-dm%>%
+  mutate(Subject=SUBJECT, Sex=str_sub(SEX, start=1, end=1),
+         Age=parse_number(Age))%>%
+  mutate(SUBJECT=NULL, SEX=NULL)%>%
+  mutate(Age=round(case_when((Age<150)~Age,
+                     (Age>150 & Age<1800)~(Age/12),
+                     (Age>=1800)~(Age/(365/12)))))
+
+dm
+
+```
+
+*Note: the limitation of this method is that I assume all the subjects are within certain age range and all unusual numbers are caused by mis-type of age units. (e.g. the 636 years or 43.3 with no unit is also a mistype of the unit). Case might be different for other datasets but this dataset only have 12 subjects, so that if I delete 1 subject, I will lose 11 rows of information, which might cause inaccuracy of the next steps.
+
+An alternative technique to clean those unusual numbers without losing its other features is to first remove it by "NA" and then dummy coding missing values by replacing all the "NA"s with the average age. I don't use this technique in this case since the cleaned data seems to be all within a reasonable range. 
+
+```{r data cleaning4}
+
+#A4. Merge two datasets by the key "subject" and check for further use
+T_d<-as.tbl(merge(Theoph,dm,by="Subject"))
+str(T_d)
+T_d
+```
+
+Characterize and provide a summary of the data stratefied by gender:
+
+```{r summary1}
+##input characterization and summary data code here.
+
+#B. Characterize and provide a summary of the data stratefied by gender
+
+#B1. by genarating custumized "Summary" table from library"dplyr"
+
+#Prepare a new dataset for the summary
+T_d1<-T_d 
+T_d1
+
+# filter max conc values for the summary
+T_d1<-T_d1%>%
+  group_by(Subject)%>%
+  filter (conc==max(conc))
+T_d1
+
+# summerize max conc in each stratify and their time to peak
+T_d2<-T_d1%>%
+  group_by(Sex)%>%
+  filter(conc==max(conc))
+T_d2
+
+
+#for (i in unique(T_d1$Subject))
+# T_d1$conc[T_d1$Subject==i] <- max(subset(T_d1, T_d1$Subject == i)$conc)
+#}
+
+#summarize the mean & sd for Age, Weight, and Dose and the concentration peak in a nested subset by subject to avoid a inaccurate smaller sd for the repeat. 
+smry1<-T_d1 %>% distinct(Age, Wt, Dose, Sex) %>% 
+  group_by(Sex) %>%
+summarise(count=n(),
+          age_mean = mean(Age), 
+          age_sd = sd(Age),
+          wt_mean = mean(Wt), 
+          wt_sd = sd(Wt), 
+          dose_mean = mean(Dose), 
+          dose_sd = sd(Dose))
+smry1
+
+```
+
+In my design each subject only shows once in the calculation so that the standard deviations wouldn't be underestimated. 
+
+This table shows means values and standard deviations for age, weight, dose and it also shows concerntration peaks stratified by gender.
+
+The following are more summaries in more details.
+
+```{r summary2}
+
+#B2. by genarating more "Summary" tables with five-number summaries
+
+# For more detailed five-number summary, split data by gender
+T_d2<- as.data.frame(T_d %>% 
+                       distinct(Subject, Age, Wt, Dose, Sex, conc) %>% 
+                       group_by(Sex))
+by_sex<-split(T_d,T_d$Sex)
+T_d_M<-by_sex$M
+T_d_F<-by_sex$F
+
+# Five number summary for females
+summary(T_d_F)
+```
+
+```{r summary3}
+# Five number summary for males
+summary(T_d_M)
+```
+
+
+```{r summary4}
+
+#B3. Distribution summaries with stacked histograms
+
+#characterization by histograms by gender with same ranges in both x & y
+library(ggplot2)
+
+h1<-ggplot(T_d2, main="Histogram of Age by Gender", aes(x=Age, fill=Sex)) +
+  geom_histogram(binwidth = 1.6)
+
+h2<-ggplot(T_d2, main="Histogram of Weight by Gender", aes(x=Wt, fill=Sex)) +
+  geom_histogram(binwidth = 1.6)
+
+library(gridExtra)
+grid.arrange(h1,h2,ncol=1)
+
+
+#Merge the data again sorted by gender for data visualization
+T_d_Sort<-rbind(T_d_F,T_d_M)
+```
+
+Based on all the information above, within the male group: ages vary from 33 years to 56 years old with mean of 46 year old, standard deviation is about 10 years; weights vary from 54 lbs to 79 kgs with mean of 66 kgs, and standard deviation is about 10 kgs. Concentration reach to its peak at an average of 11.4 mg/kg. 
+
+Within the female group: ages vary from 42 years to 72 years old with mean of 53 year old, standard deviation is about 13 years; weights vary from 56 lbs to 86 kgs with mean of 73 kgs, and standard deviation is about 9 kgs. Concentration reach to its peak at an average of 9.03 mg/kg. 
+
+Male age distribution is a little skewed to the left, and female weight distribution is a little skewed to the right. However both groups' age and weight are in a good range.
+
+## Visualization
+
+
+```{r visualization1}
+##input visualization code here
+
+#C. Data Visualization
+
+#C1. Scatterplot on plotly
+library(plotly)
+library(broom)
+d<-loess(T_d_Sort$conc~T_d_Sort$Time,T_d_Sort)
+plot1 <- plot_ly(T_d_Sort, x = ~T_d_Sort$Time[1:11], y = ~T_d_Sort$conc[1:11], 
+                 name = 'Subjet 1,F', type = 'scatter', mode = 'markers', 
+                 color = I('coral')) %>%
+  
+  add_trace(x=~T_d_Sort$Time[12:22],y = ~T_d_Sort$conc[12:22], 
+            name = 'Subject 2,F', mode = 'markers') %>%
+  add_trace(x=~T_d_Sort$Time[23:33],y = ~T_d_Sort$conc[23:33], 
+            name = 'Subject 3,F', mode = 'markers') %>%
+  add_trace(x=~T_d_Sort$Time[34:44],y = ~T_d_Sort$conc[34:44], 
+            name = 'Subject 4,F', mode = 'markers') %>%
+  add_trace(x=~T_d_Sort$Time[45:55],y = ~T_d_Sort$conc[45:55], 
+            name = 'Subject 5,F', mode = 'markers') %>%
+  add_trace(x=~T_d_Sort$Time[56:66],y = ~T_d_Sort$conc[56:66], 
+            name = 'Subject 6,F', mode = 'markers') %>%
+  add_trace(x=~T_d_Sort$Time[67:77],y = ~T_d_Sort$conc[67:77], 
+            name = 'Subject 7,M', mode = 'markers', 
+            color = I('darkseagreen2')) %>%
+  add_trace(x=~T_d_Sort$Time[78:88],y = ~T_d_Sort$conc[78:88], 
+            name = 'Subject 8,M', mode = 'markers',
+            color = I('darkseagreen2')) %>%
+  add_trace(x=~T_d_Sort$Time[89:99],y = ~T_d_Sort$conc[89:99], 
+            name = 'Subject 9,M', mode = 'markers',
+            color = I('darkseagreen2')) %>%
+  add_trace(x=~T_d_Sort$Time[100:110],y = ~T_d_Sort$conc[100:110], 
+            name = 'Subject 10,M', mode = 'markers',
+            color = I('darkseagreen2')) %>%
+  add_trace(x=~T_d_Sort$Time[111:121],y = ~T_d_Sort$conc[111:121], 
+            name = 'Subject 11,M', mode = 'markers',
+            color = I('darkseagreen2')) %>%
+  add_trace(x=~T_d_Sort$Time[122:132],y = ~T_d_Sort$conc[122:132], 
+            name = 'Subject 12,M', mode = 'markers',
+            color = I('darkseagreen2')) %>%
+  add_lines(x=~T_d_Sort$Time,y = ~fitted(d), name = 'Loess Smoother', 
+            mode = 'lines',color = I('black')) %>%
+  add_ribbons(data=augment(d),x=~T_d_Sort$Time, y=~T_d_Sort$Time, 
+              ymin = ~fitted(d) - 1.96 * .se.fit,
+              ymax = ~fitted(d) + 1.96 * .se.fit, 
+              line = list(color = 'rgba(7, 164, 181, 0.05)'),
+              fillcolor = 'rgba(7, 164, 181, 0.2)',
+              name = "Standard Error") %>%
+  layout(
+  title = "Concentration over Time: Oragne=F, Mint =M",
+    xaxis = list(title = "Time (hrs)"),
+    yaxis = list(title = "Concentration (mg/kg)")
+  )
+plot1
+
+```
+*Please click on the points for interactive information in details for each subject at each time point.  
+
+Plot shows that males on average has higher concentrations, which agrees with the summary. And both males and females has a trendency of reaching a concentration to its peak sharply after taking the doses around 2-3 hours, and the concentration fall down smoothly after the peak in the rest of the day.
+
+```{r visulization2}
+#C2. More information about the data
+#Weight vs. Conc
+plot3<-T_d2 %>% 
+  ggplot(aes(Wt, conc)) +
+  geom_point(aes(group = Subject, color = Subject)) + 
+  geom_smooth(color = "yellow", method = "loess") +
+  labs(x = "Weight",
+       y = "Concentration (mg/kg)")
+plot3
+```
+
+It seems like weight and concentration peak also has some correlation in that, the lightest people tend to have higher concentration peaks; but if one weighs more than about 66 kgs, the concentration peaks show not too much differences. This might be not so accurate becasue of the small sample size and large standard errors.  
+
+## Analysis
+
+Estimation of the PK property, area under the curve (AUC), for the drug based on the available data:  
+
+```{r AUC}
+##input code for estimating AUC here.
+#D. Analysis
+
+#Assumptions: This is a complete data design, but not a batch or serial sampling design, since samples are taken more than once from each gender/age, and are at all time points. 
+
+library(PK)
+con_mean <- as.vector(colMeans(matrix(unlist(T_d$conc), ncol = 11, 
+                                      byrow = TRUE))) 
+time_mean<- as.vector(colMeans(matrix(unlist(T_d$Time), ncol = 11, 
+                                      byrow = TRUE))) 
+auc1<-auc(conc=con_mean, time=time_mean, method='t', design='complete')
+auc1
+
+smooth <- predict(loess(T_d$conc ~ T_d$Time), T_d, normalize = T)
+con_smooth <- as.vector(colMeans(matrix(unlist(smooth), ncol = 11, 
+                                        byrow = TRUE))) 
+auc2<-auc(conc = con_smooth, time = time_mean, method='t', design='complete')
+auc2
+
+#Make an informative plot for the variation of the two models
+plot(auc1, pch=19, col='navy',ylim=c(0,9))
+plot(auc2, pch=21, col='red', add=TRUE)
+
+#The plot shows that the variation/variability is not too much. 
+
+```
+Based on the result, under the assumption of this being a complete data design, but not a batch or serial sampling design, the AUC value is suggested at about 103.77 or 103.22. Variance is not too noticeable.  
